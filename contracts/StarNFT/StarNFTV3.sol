@@ -12,263 +12,137 @@
     SPDX-License-Identifier: Apache License, Version 2.0
 */
 
-pragma solidity 0.7.6;
+pragma solidity > 0.8.0;
 
-import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
+
+//Implement the ERC721A contract for saving the gas cost in batch minting and burning 
+// MoreInfo on ERC721A: https://www.azuki.com/erc721a
+import "../ERC721A/contracts/ERC721A.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "../interfaces/IStarNFT.sol";
+// import "@openzeppelin/contracts/security/Pausable.sol";
+import "@openzeppelin/contracts/utils/Strings.sol";
+// import "./IStarNFT.sol";
 
-contract StarNFTV3 is ERC721, IStarNFT, Ownable {
-    using SafeMath for uint256;
 
-    /* ============ Events ============ */
+contract StarNFTV3 is ERC721A,Ownable {
+    using Strings for uint256;
     event EventMinterAdded(address indexed newMinter);
     event EventMinterRemoved(address indexed oldMinter);
+    event BaseURLChanged(string oldBaseurl, string newBaseurl);
+    
+    mapping (address=>bool) public minters;
 
-    /* ============ Modifiers ============ */
-    /**
-     * Only minter.
-     */
+    string private baseURI;
+    // bool public transferable = true;  // Doesn't make any sense becuase contract owner paused the transfer than other NFTs owner can't transfer their own NFTs (Bad User Expirence)
+
     modifier onlyMinter() {
-        require(minters[msg.sender], "must be minter");
+        require(minters[msg.sender], "You are not minter.");
         _;
     }
 
-    /* ============ Enums ================ */
-    /* ============ Structs ============ */
-    /* ============ State Variables ============ */
+    constructor(string memory _name, string memory _symbol) ERC721A(_name,_symbol){
 
-    // Mint and burn star.
-    mapping(address => bool) public minters;
-    // Default allow transfer
-    bool public transferable = true;
-    // Star id to cid.
-    mapping(uint256 => uint256) private _cids;
-
-    uint256 private _starCount;
-    string private _galaxyName;
-    string private _galaxySymbol;
-
-    /* ============ Constructor ============ */
-    constructor() ERC721("", "") {}
-
-    /**
-     * @dev See {IERC721-transferFrom}.
-     */
-    function transferFrom(
-        address from,
-        address to,
-        uint256 tokenId
-    ) public override {
-        require(transferable, "disabled");
-        require(
-            _isApprovedOrOwner(_msgSender(), tokenId),
-            "ERC721: caller is not approved or owner"
-        );
-        _transfer(from, to, tokenId);
     }
 
-    /**
-     * @dev See {IERC721-safeTransferFrom}.
-     */
-    function safeTransferFrom(
-        address from,
-        address to,
-        uint256 tokenId
-    ) public override {
-        require(transferable, "disabled");
-        require(
-            _isApprovedOrOwner(_msgSender(), tokenId),
-            "ERC721: caller is not approved or owner"
-        );
-        safeTransferFrom(from, to, tokenId, "");
+    // function setTransferable(bool _transferable) external onlyOwner {
+    //     transferable = _transferable;
+    // }
+
+    function addMinter(address _user) external onlyOwner {
+        require(_user != address(0), "Minter must not be null address");
+        require(!minters[_user], "Minter already added");
+        minters[_user] = true;
+        emit EventMinterAdded(_user);
+    } 
+
+    function mint(address to) public onlyMinter {
+        _safeMint(to,1);
+    }
+    
+    function mintBatch(address to, uint256 quantity) public onlyMinter {
+        _safeMint(to,quantity);
     }
 
-    /**
-     * @dev See {IERC721-safeTransferFrom}.
-     */
-    function safeTransferFrom(
-        address from,
-        address to,
-        uint256 tokenId,
-        bytes memory _data
-    ) public override {
-        require(transferable, "disabled");
-        require(
-            _isApprovedOrOwner(_msgSender(), tokenId),
-            "ERC721: caller is not approved or owner"
-        );
-        _safeTransfer(from, to, tokenId, _data);
+    function _baseURI() internal view override returns(string memory) {
+        return baseURI;
+    }
+    
+    function setBaseURI(string memory url) external onlyOwner() {
+        baseURI = url;
     }
 
-    /**
-     * @dev See {IERC721Metadata-name}.
-     */
-    function name() public view override returns (string memory) {
-        return _galaxyName;
+    function tokenURI(uint256 tokenId) public view override returns(string memory) {
+          if (!_exists(tokenId)) revert URIQueryForNonexistentToken();
+        string memory baseURI = _baseURI();
+        return bytes(baseURI).length != 0 ? string(abi.encodePacked(baseURI, tokenId.toString(),".json")) : '';
     }
 
-    /**
-     * @dev See {IERC721Metadata-symbol}.
-     */
-    function symbol() public view override returns (string memory) {
-        return _galaxySymbol;
+    function burn(uint256 tokenId) public {
+        _burn(tokenId);
     }
 
-    /**
-     * @dev Get Star NFT CID
-     */
-    function cid(uint256 tokenId) public view override returns (uint256) {
-        return _cids[tokenId];
-    }
-
-    /* ============ External Functions ============ */
-    function mint(address account, uint256 cid)
-        external
-        override
-        onlyMinter
-        returns (uint256)
-    {
-        _starCount++;
-        uint256 sID = _starCount;
-
-        _mint(account, sID);
-        _cids[sID] = cid;
-        return sID;
-    }
-
-    function mintBatch(
-        address account,
-        uint256 amount,
-        uint256[] calldata cidArr
-    ) external override onlyMinter returns (uint256[] memory) {
-        uint256[] memory ids = new uint256[](amount);
-        for (uint256 i = 0; i < ids.length; i++) {
-            _starCount++;
-            ids[i] = _starCount;
-            _mint(account, ids[i]);
-            _cids[ids[i]] = cidArr[i];
+    function burnBatch(uint256[] calldata tokenIds) public {
+        uint256 idsLength = tokenIds.length;
+        unchecked {
+        for(uint i=0 ; i < idsLength; i++) {
+            _burn(tokenIds[i],false);
         }
-        return ids;
-    }
-
-    function burn(address account, uint256 id) external override onlyMinter {
-        require(
-            _isApprovedOrOwner(_msgSender(), id),
-            "ERC721: caller is not approved or owner"
-        );
-        _burn(id);
-        delete _cids[id];
-    }
-
-    function burnBatch(address account, uint256[] calldata ids)
-        external
-        override
-        onlyMinter
-    {
-        for (uint256 i = 0; i < ids.length; i++) {
-            require(
-                _isApprovedOrOwner(_msgSender(), ids[i]),
-                "ERC721: caller is not approved or owner"
-            );
-            _burn(ids[i]);
-            delete _cids[ids[i]];
         }
     }
 
-    /* ============ External Getter Functions ============ */
-    function isOwnerOf(address account, uint256 id)
-        public
-        view
-        override
-        returns (bool)
-    {
-        address owner = ownerOf(id);
-        return owner == account;
-    }
-
-    function getNumMinted() external view override returns (uint256) {
-        return _starCount;
-    }
-
-    function tokenURI(uint256 id) public view override returns (string memory) {
-        require(id <= _starCount, "NFT does not exist");
-        if (bytes(baseURI()).length == 0) {
-            return "";
-        } else {
-            return string(abi.encodePacked(baseURI(), uint2str(id), ".json"));
-        }
-    }
-
-    /* ============ Internal Functions ============ */
-    /* ============ Private Functions ============ */
-    /* ============ Util Functions ============ */
-    /**
-     * PRIVILEGED MODULE FUNCTION. Sets a new baseURI for all token types.
-     */
-    function setURI(string memory newURI) external onlyOwner {
-        _setBaseURI(newURI);
-    }
-
-    /**
-     * PRIVILEGED MODULE FUNCTION. Sets a new transferable for all token types.
-     */
-    function setTransferable(bool _transferable) external onlyOwner {
-        transferable = _transferable;
-    }
-
-    /**
-     * PRIVILEGED MODULE FUNCTION. Sets a new name for all token types.
-     */
-    function setName(string memory _name) external onlyOwner {
-        _galaxyName = _name;
-    }
-
-    /**
-     * PRIVILEGED MODULE FUNCTION. Sets a new symbol for all token types.
-     */
-    function setSymbol(string memory _symbol) external onlyOwner {
-        _galaxySymbol = _symbol;
-    }
-
-    /**
-     * PRIVILEGED MODULE FUNCTION. Add a new minter.
-     */
-    function addMinter(address minter) external onlyOwner {
-        require(minter != address(0), "Minter must not be null address");
-        require(!minters[minter], "Minter already added");
-        minters[minter] = true;
-        emit EventMinterAdded(minter);
-    }
-
-    /**
-     * PRIVILEGED MODULE FUNCTION. Remove a old minter.
-     */
     function removeMinter(address minter) external onlyOwner {
         require(minters[minter], "Minter does not exist");
         delete minters[minter];
         emit EventMinterRemoved(minter);
     }
 
-    function uint2str(uint256 _i) internal pure returns (string memory) {
-        if (_i == 0) {
-            return "0";
-        }
-        uint256 j = _i;
-        uint256 len;
-        while (j != 0) {
-            len++;
-            j /= 10;
-        }
-        bytes memory bStr = new bytes(len);
-        uint256 k = len;
-        while (_i != 0) {
-            k = k - 1;
-            uint8 temp = (48 + uint8(_i - (_i / 10) * 10));
-            bytes1 b1 = bytes1(temp);
-            bStr[k] = b1;
-            _i /= 10;
-        }
-        return string(bStr);
-    }
+
+    // Remove the transferable functionality 
+
+    // function transferFrom(
+    //     address from,
+    //     address to,
+    //     uint256 tokenId
+    // ) public override {
+    //     require(transferable, "disabled");
+    //     require(
+    //         _isApprovedOrOwner(_msgSender(), tokenId),
+    //         "ERC721: caller is not approved or owner"
+    //     );
+    //     _transfer(from, to, tokenId);
+    // }
+
+    // /**
+    //  * @dev See {IERC721-safeTransferFrom}.
+    //  */
+    // function safeTransferFrom(
+    //     address from,
+    //     address to,
+    //     uint256 tokenId
+    // ) public override {
+    //     require(transferable, "disabled");
+    //     require(
+    //         _isApprovedOrOwner(_msgSender(), tokenId),
+    //         "ERC721: caller is not approved or owner"
+    //     );
+    //     safeTransferFrom(from, to, tokenId, "");
+    // }
+
+    // /**
+    //  * @dev See {IERC721-safeTransferFrom}.
+    //  */
+    // function safeTransferFrom(
+    //     address from,
+    //     address to,
+    //     uint256 tokenId,
+    //     bytes memory _data
+    // ) public override {
+    //     require(transferable, "disabled");
+    //     require(
+    //         _isApprovedOrOwner(_msgSender(), tokenId),
+    //         "ERC721: caller is not approved or owner"
+    //     );
+    //     _safeTransfer(from, to, tokenId, _data);
+    // }
+
 }
